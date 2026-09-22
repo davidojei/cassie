@@ -33,9 +33,26 @@ data-quality report).
 4. Any row dropped or corrected is logged with a reason — nothing is
    silently discarded.
 
-## Not yet decided (resolved during Phase 4, once real data is loaded)
+## Resolved from the Phase 2 audit (see `docs/data_quality_report.md` for full detail)
 
-- Exact thresholds for "impossible" delivery duration (needs the actual
-  distribution, not a guess).
-- Whether to drop or impute rows with missing `order_delivered_customer_date`
-  on otherwise-valid orders (affects delivery features materially).
+- **Delivery duration:** no negative values exist; nothing is
+  "impossible." Formal IQR method (Q3 + 1.5×IQR = 28.5 days) was tried
+  and rejected — it flags 5.05% of orders, too many to be an actionable
+  "outlier" signal on this right-skewed distribution. Using the 99th
+  percentile instead: flag (don't drop) anything over 46 days as an
+  outlier for review. See `docs/data_quality_report.md` for the full
+  reasoning.
+- **Missing `order_delivered_customer_date`** (2.98% of orders): kept,
+  not dropped or imputed — these are legitimately undelivered/in-transit
+  orders. Represented as `delivery_status != delivered`, not a null to
+  clean up.
+- **All other critical checks passed with zero violations** on the real
+  dataset: no duplicate PKs, no orphan FKs, no negative financial
+  values, no delivered-before-purchased orders, no future timestamps,
+  no out-of-range review scores.
+- **New finding not anticipated in the original plan:** cart-splitting
+  (multiple `order_id`s per real checkout) inflates naive repeat-purchase
+  counts by ~9%. All downstream frequency features must use distinct
+  `(customer_unique_id, order_purchase_timestamp)` purchase events, not
+  raw order rows — see `docs/data_quality_report.md` and
+  `docs/churn_definition.md`.
