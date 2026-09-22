@@ -1,0 +1,30 @@
+# data
+data/raw/*
+data/processed/*
+data/synthetic/*
+!data/raw/README.md
+!data/processed/README.md
+!data/synthetic/README.md
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# env / secrets
+.env
+
+# notebooks
+.ipynb_checkpoints/
+
+# artifacts
+artifacts/models/*
+artifacts/reports/*
+artifacts/figures/*
+!artifacts/**/README.md
+
+# OS
+.DS_Store

@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cassie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cassie}
+      POSTGRES_DB: ${POSTGRES_DB:-cassie}
+    ports:
+      - "5432:5432"
+    volumes:
+      - cassie_pgdata:/var/lib/postgresql/data
+
+volumes:
+  cassie_pgdata:
