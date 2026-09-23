@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cassie}
       POSTGRES_DB: ${POSTGRES_DB:-cassie}
     ports:
-      - "5432:5432"
+      - "5442:5432"
     volumes:
       - cassie_pgdata:/var/lib/postgresql/data
 
