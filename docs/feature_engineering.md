@@ -134,9 +134,27 @@ generalization.
 
 1. **Run against real data, cross-split leakage found and fixed** (see
    above) — this replaced the original "not yet run" status. Row counts
-   post-fix haven't been re-verified against a second real run yet;
-   next step is rerunning `build_features.py` with the fix in place and
-   confirming zero train/test customer overlap.
+   post-fix verified against a second real run: 0 train/test customer
+   overlap, confirmed.
+1b. **Second real bug found via the null-rate sanity check** (`scripts/check_feature_nulls.py`):
+   `lifetime_orders`, `orders_last_30/90/180_days`, `purchase_frequency`,
+   and the two advanced-trend order-count features were counting raw
+   order rows, not deduplicated purchase events — a cart-split customer
+   (2 order rows, same timestamp) showed `lifetime_orders = 2` instead
+   of the correct `1`, violating the standing purchase-events rule from
+   `docs/churn_definition.md`. Caught because the null-rate check's
+   sanity assertion (`% rows with lifetime_orders==1` should match
+   `% null purchase_gap_mean`) came back 97.39% vs 97.73% — close but
+   not equal, which shouldn't happen if both were computed consistently.
+   Fixed in `build_snapshot()`: all frequency **counts** now come from
+   deduplicated `purchase_ts`; revenue/delivery/CX/payment **sums**
+   correctly stay order-level, since split orders are still real
+   revenue. A cart-split regression test
+   (`tests/unit/test_build_features.py`, customer `c4`) now asserts
+   `lifetime_orders == 1` for a 2-order same-timestamp case, and passes.
+   **Not yet re-verified against the real dataset** — rerun
+   `build_features.py` and `check_feature_nulls.py` and confirm the
+   97.39%/97.73% gap has closed to ~0.
 2. **The R$18,623 outlier customer** flagged in
    `docs/business_exploration_findings.md` hasn't been inspected yet.
    It will now show up as an extreme `lifetime_revenue` /

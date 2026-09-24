@@ -170,6 +170,15 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
         purchase_ts = g["order_purchase_timestamp"].drop_duplicates().sort_values()
         gaps = purchase_ts.diff().dt.days.dropna()
 
+        # Frequency COUNTS must use deduplicated purchase events, not raw
+        # order rows (a cart split = 2 order rows but 1 real purchase) —
+        # this is the standing rule from docs/churn_definition.md. Revenue
+        # SUMS below correctly stay order-level, since each split order is
+        # still real revenue.
+        lifetime_orders_true = len(purchase_ts)
+        recent90_events = purchase_ts[purchase_ts > win90]
+        prev90_events = purchase_ts[(purchase_ts > win90_prev_start) & (purchase_ts <= win90)]
+
         delivered = g[g["delivery_status"] == "delivered"]
         recent_delivered = delivered[delivered["order_purchase_timestamp"] > win90]
 
@@ -188,18 +197,18 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
             "snapshot_date": snapshot_date,
             # RECENCY
             "days_since_last_purchase": (snapshot_date - last_purchase).days,
-            # FREQUENCY
-            "orders_last_30_days": (g["order_purchase_timestamp"] > win30).sum(),
-            "orders_last_90_days": len(recent90),
-            "orders_last_180_days": (g["order_purchase_timestamp"] > win180).sum(),
-            "lifetime_orders": len(g),
-            # MONETARY
+            # FREQUENCY (event-based counts — see fix above)
+            "orders_last_30_days": (purchase_ts > win30).sum(),
+            "orders_last_90_days": len(recent90_events),
+            "orders_last_180_days": (purchase_ts > win180).sum(),
+            "lifetime_orders": lifetime_orders_true,
+            # MONETARY (order-level sums — correct to include split orders)
             "lifetime_revenue": g["order_total"].sum(),
             "revenue_last_90_days": recent90["order_total"].sum(),
             "average_order_value": g["order_total"].mean(),
             "max_order_value": g["order_total"].max(),
             # BEHAVIOR
-            "purchase_frequency": len(g) / tenure_days,
+            "purchase_frequency": lifetime_orders_true / tenure_days,
             "purchase_gap_mean": gaps.mean() if len(gaps) else np.nan,
             "purchase_gap_std": gaps.std() if len(gaps) > 1 else np.nan,
             "days_since_previous_order": (snapshot_date - last_purchase).days,
@@ -216,14 +225,14 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
             "payment_value": g["payment_value"].sum(),
             # TREND (base, §12)
             "spend_trend_90d": recent90["order_total"].sum() - prev90["order_total"].sum(),
-            "purchase_frequency_trend_90d": len(recent90) - len(prev90),
+            "purchase_frequency_trend_90d": len(recent90_events) - len(prev90_events),
             "review_trend_90d": recent90["review_score"].mean() - prev90["review_score"].mean()
                 if recent90["review_score"].notna().any() and prev90["review_score"].notna().any() else np.nan,
             # ADVANCED TREND (§13) — explicit recent vs. historical pairs
             "recent_90d_revenue": recent90["order_total"].sum(),
             "previous_90d_revenue": prev90["order_total"].sum(),
-            "recent_90d_order_count": len(recent90),
-            "lifetime_purchase_frequency": len(g) / tenure_days,
+            "recent_90d_order_count": len(recent90_events),
+            "lifetime_purchase_frequency": lifetime_orders_true / tenure_days,
             "recent_delivery_delay": recent_delivered["delivery_delay_days"].mean() if len(recent_delivered) else np.nan,
             "historical_delivery_delay": delivered["delivery_delay_days"].mean(),
             # LABEL

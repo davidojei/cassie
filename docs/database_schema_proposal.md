@@ -36,17 +36,26 @@ Cleaned, typed, deduplicated, deterministic (no business logic yet).
 Business-meaningful, query-ready views/tables. This is what the ML
 feature pipeline and the dashboard both read from.
 
-- `analytics.customer_360` — one row per `customer_unique_id`: RFM,
-  behavior, delivery, CX, payment, product, seller, geography, trend
-  features (full list in the project brief, §12–13)
+- **`analytics.customer_snapshot_features`** — built in Phase 7
+  (`scripts/build_features.py`), documented in
+  `docs/feature_engineering.md`. Supersedes the two lines originally
+  planned here (`customer_360` for features,
+  `customer_retention_features` for churn labels) — those were merged
+  into one table, because computing features and labels separately per
+  snapshot risks exactly the kind of temporal/customer-leakage bug
+  found and fixed in Phase 7 (see that doc). One row per
+  (`customer_unique_id`, `snapshot_date`): RFM, behavior, delivery, CX,
+  payment, product, seller, geography, and trend features (brief
+  §12–13), plus the leakage-safe `churned` label and a `split` column
+  (train/validation/test, assigned by each customer's first-appearance
+  cohort, not by snapshot date alone).
 - `analytics.customer_monthly_metrics` — one row per
-  `customer_unique_id` × month
-- `analytics.customer_retention_features` — churn-definition-window
-  features, leakage-safe (see temporal validation approach)
-- `analytics.customer_revenue_metrics`
+  `customer_unique_id` × month — not yet built
+- `analytics.customer_revenue_metrics` — not yet built
 - `analytics.customer_risk_metrics` — post-model, joined predictions +
-  SHAP summary (populated once `ml.churn_predictions` exists)
-- `analytics.segment_metrics`
+  SHAP summary (populated once `ml.churn_predictions` exists) — not yet
+  built
+- `analytics.segment_metrics` — not yet built
 
 ## `ml`
 
