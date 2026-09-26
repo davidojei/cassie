@@ -74,7 +74,7 @@ def load_data(engine) -> pd.DataFrame:
     return add_missingness_indicators(df)
 
 
-def build_pipeline() -> Pipeline:
+def build_preprocessor() -> ColumnTransformer:
     numeric_pipeline = Pipeline([
         ("impute", SimpleImputer(strategy="median")),
         ("scale", StandardScaler()),
@@ -85,15 +85,16 @@ def build_pipeline() -> Pipeline:
     ])
     indicator_cols = list(INDICATOR_SPECS.keys())
 
-    preprocessor = ColumnTransformer([
+    return ColumnTransformer([
         ("numeric", numeric_pipeline, NUMERIC_FEATURES),
         ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
         ("indicators", "passthrough", indicator_cols),
     ])
 
-    model = LogisticRegression(class_weight="balanced", max_iter=2000, random_state=42)
 
-    return Pipeline([("preprocess", preprocessor), ("model", model)])
+def build_pipeline() -> Pipeline:
+    model = LogisticRegression(class_weight="balanced", max_iter=2000, random_state=42)
+    return Pipeline([("preprocess", build_preprocessor()), ("model", model)])
 
 
 def evaluate(pipeline: Pipeline, X, y, split_name: str) -> dict:
