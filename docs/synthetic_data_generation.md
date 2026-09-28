@@ -55,6 +55,52 @@ in-memory database with a deliberate 3-item, 2-payment order, asserting
 the result is exactly 100 (the real item total), not 600 (what the
 fan-out would produce).
 
+## A second, subtler bug found after real model results: span_days leakage
+
+After integrating this data into the churn model (Phase 9 follow-up),
+validation ROC-AUC jumped from 0.5431 to 0.6552 — but so did train
+performance, dramatically, for **logistic regression specifically**. A
+plain linear model suddenly fitting training data much better is a red
+flag for leaked information, not a cause for celebration, so this was
+traced rather than accepted at face value.
+
+**The bug**: `generate_customer_support()` and
+`generate_marketing_campaigns()` originally sized their event-dating
+window using `span_days = (last_purchase − first_purchase)` — the
+customer's TRUE, full purchase lifespan, including purchases that
+happen after any early snapshot. A fixed number of synthetic
+events then got spread across that window. Concretely: a true
+one-time buyer (churned) has `last_purchase ≈ first_purchase`, so
+`span_days` is tiny (~60 days) — the same event count gets packed
+densely into a short window. A genuine repeat buyer (not churned) who
+returns 8 months later has a much larger `span_days` — the same event
+count gets spread thin. Result: `n_campaigns_received` and
+`n_support_tickets`, measured as of an early snapshot, came out
+systematically higher for customers who turned out to be one-time
+buyers — not because of anything realistic about marketing or support
+operations, but because the generator used each customer's **actual
+future purchase behavior** to decide how tightly to pack their
+synthetic timestamps. That's the label leaking in sideways, through
+`last_purchase` as a proxy, past the "never correlate with the label
+directly" rule — the rule held, the proxy got through anyway.
+
+**The fix**: both generators now use `EVENT_HORIZON_DAYS` (a fixed,
+customer-independent 730-day window from `first_purchase`, capped at
+`MAX_VALID_DATE`) instead of anything derived from `last_purchase`.
+Proven concretely, not just asserted: `tests/unit/test_generate_synthetic_data.py`
+test 8 builds two "twin" customers, identical in every real-behavior
+input except `last_purchase` (one a true one-timer, one a long-span
+repeat buyer), and asserts their generated campaign dates are now
+byte-for-byte identical given the same RNG state — proof that
+`last_purchase` no longer influences event timing at all.
+
+**Why this matters beyond just fixing it**: this is a good example of
+how leakage can sneak past an explicit rule ("never use the label")
+through a variable that isn't the label but is causally entangled with
+it. `last_purchase` isn't `churned`, but it's *how churned gets
+computed* — using it to shape any other generated field is exactly as
+dangerous as using the label directly, just harder to spot.
+
 ## Table-by-table generation logic
 
 ### `customer_support`

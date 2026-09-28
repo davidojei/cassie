@@ -1,6 +1,23 @@
 import sys
 import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent / "scripts"))
+
+SCRIPTS_DIR = pathlib.Path(__file__).parent.parent.parent / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+# --- test 0: the script actually parses and defines what main() needs ---
+# (a previous version of this file passed every logic assertion below
+# while build_features.py itself had a broken/missing function -- the
+# tests below call build_snapshot() directly and never exercise
+# load_base_tables()/main()'s wiring, so a structural break like that
+# slipped through silently. This catches that class of bug specifically.)
+import ast
+source = (SCRIPTS_DIR / "build_features.py").read_text()
+tree = ast.parse(source)  # raises SyntaxError immediately if the file is broken
+top_level_functions = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+for required in ["load_base_tables", "load_synthetic_tables", "build_snapshot", "main"]:
+    assert required in top_level_functions, f"build_features.py is missing {required}() -- broken script"
+print("Script structure check (parses, all required functions present): PASSED")
+
 import pandas as pd
 import numpy as np
 from build_features import build_snapshot, SNAPSHOT_DATES, hhi
@@ -57,10 +74,33 @@ item_summary = item_summary.merge(
 purchase_events = order_summary[["customer_unique_id", "order_purchase_timestamp"]].drop_duplicates().copy()
 purchase_events["representative_order_id"] = "n/a"  # not used by build_snapshot
 
+# c1: one ticket BEFORE the snapshot, one AFTER -- tests that the temporal
+# filter correctly counts only the earlier one. c2: one campaign touch.
+support = pd.DataFrame({
+    "customer_unique_id": ["c1", "c1"],
+    "created_at": pd.to_datetime(["2017-02-01", "2017-09-01"]),  # second is AFTER the 2017-07-01 snapshot
+    "resolved": [True, True],
+    "escalated": [False, False],
+    "resolution_hours": [5.0, 3.0],
+    "customer_satisfaction": [4, 5],
+})
+campaigns = pd.DataFrame({
+    "customer_unique_id": ["c2"],
+    "campaign_date": pd.to_datetime(["2017-03-15"]),
+    "opened": [True],
+    "clicked": [False],
+    "converted": [False],
+})
+interventions = pd.DataFrame({
+    "customer_unique_id": ["c3"],
+    "created_at": pd.to_datetime(["2017-01-15"]),
+})
+
 # snapshot at 2017-07-01: c1 active (3 orders), c2 active (1 order, no future -> churned),
 # c3 active (1 order as of snapshot, but has a future purchase in 2018-01 -> gap = 198 days -> churned=1 since >180)
 snap = pd.Timestamp("2017-07-01")
-result = build_snapshot(snap, purchase_events, order_summary, item_summary, customers)
+result = build_snapshot(snap, purchase_events, order_summary, item_summary, customers,
+                         support, campaigns, interventions)
 
 print(result[["customer_unique_id", "lifetime_orders", "days_since_last_purchase",
               "average_order_value", "unique_categories", "category_concentration",
@@ -81,3 +121,22 @@ print(f"\nc4 (cart-split, 2 order rows, same timestamp): lifetime_orders = {c4_l
 assert c4_lifetime_orders == 1, "BUG: cart-split orders are being double-counted as 2 purchases"
 
 print("\nALL SMOKE TEST ASSERTIONS PASSED (including cart-split frequency-count fix)")
+
+# --- synthetic-table temporal filtering: c1's ticket count must only
+# count the ticket BEFORE the snapshot (2017-02-01), never the one after
+# (2017-09-01) -- proves the leakage guard actually works, not just runs.
+c1_tickets = result.loc[result.customer_unique_id == "c1", "n_support_tickets"].iloc[0]
+print(f"\nc1 support tickets as of snapshot: {c1_tickets} (should be 1, NOT 2 -- "
+      f"the second ticket is dated after the snapshot)")
+assert c1_tickets == 1, "BUG: a future support ticket leaked into a past snapshot's features"
+
+c2_campaigns = result.loc[result.customer_unique_id == "c2", "n_campaigns_received"].iloc[0]
+assert c2_campaigns == 1, "c2's one pre-snapshot campaign touch should be counted"
+
+c3_targeted = result.loc[result.customer_unique_id == "c3", "has_been_targeted_for_retention"].iloc[0]
+assert c3_targeted == 1, "c3's pre-snapshot intervention should set the flag"
+c1_targeted = result.loc[result.customer_unique_id == "c1", "has_been_targeted_for_retention"].iloc[0]
+assert c1_targeted == 0, "c1 has no intervention -- flag should be 0, not null/true"
+
+print("Synthetic-table temporal filtering (support/campaigns/interventions): PASSED")
+print("\nALL SYNTHETIC-FEATURE SMOKE TESTS PASSED")

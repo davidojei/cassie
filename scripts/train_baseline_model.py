@@ -48,6 +48,14 @@ NUMERIC_FEATURES = [
     "recent_90d_revenue", "previous_90d_revenue",
     "purchase_frequency_trend_90d", "review_trend_90d", "recent_delivery_delay",
     "unique_categories", "category_concentration", "unique_sellers", "seller_concentration",
+    # Synthetic data (docs/synthetic_data_generation.md) -- timestamped
+    # tables only, filtered per-snapshot; customer_costs/customer_segments
+    # deliberately excluded, see docs/feature_engineering.md for why.
+    "n_support_tickets", "n_tickets_last_90_days", "pct_tickets_resolved",
+    "pct_tickets_escalated", "avg_resolution_hours", "avg_ticket_satisfaction",
+    "n_campaigns_received", "pct_campaigns_opened", "pct_campaigns_clicked",
+    "pct_campaigns_converted", "days_since_last_campaign",
+    "has_been_targeted_for_retention",
 ]
 CATEGORICAL_FEATURES = ["preferred_payment_method", "customer_state"]
 LABEL_COLUMN = "churned"
@@ -58,6 +66,10 @@ INDICATOR_SPECS = {
     "has_review": ["average_review_score", "negative_review_rate"],
     "has_delivered_order": ["average_delivery_delay", "late_delivery_rate", "average_delivery_days"],
     "has_recent_delivered_order": ["recent_delivery_delay"],
+    "has_support_history": ["pct_tickets_resolved", "pct_tickets_escalated",
+                             "avg_resolution_hours", "avg_ticket_satisfaction"],
+    "has_campaign_history": ["pct_campaigns_opened", "pct_campaigns_clicked",
+                              "pct_campaigns_converted", "days_since_last_campaign"],
 }
 
 

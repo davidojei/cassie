@@ -59,6 +59,34 @@ for s in SNAPSHOT_DATES:
         f"Snapshot {s} + {CHURN_WINDOW_DAYS}d exceeds valid data range — would be censored."
 
 
+def load_synthetic_tables(engine):
+    """Loads the THREE timestamped synthetic tables safe for snapshot
+    features -- customer_support, marketing_campaigns,
+    retention_interventions. customer_costs and customer_segments are
+    deliberately excluded: both were derived from each customer's
+    FULL-history revenue percentile (see
+    docs/synthetic_data_generation.md), so a customer's tier could
+    reflect a purchase made AFTER a given snapshot -- using them here
+    would leak future information into features, the exact class of
+    bug this snapshot design exists to prevent. Those two tables belong
+    in Phase 11 (revenue at risk), not here."""
+    support = pd.read_sql(
+        "SELECT customer_unique_id, created_at, resolved, escalated, "
+        "resolution_hours, customer_satisfaction FROM raw.customer_support",
+        engine, parse_dates=["created_at"],
+    )
+    campaigns = pd.read_sql(
+        "SELECT customer_unique_id, campaign_date, opened, clicked, converted "
+        "FROM raw.marketing_campaigns",
+        engine, parse_dates=["campaign_date"],
+    )
+    interventions = pd.read_sql(
+        "SELECT customer_unique_id, created_at FROM raw.retention_interventions",
+        engine, parse_dates=["created_at"],
+    )
+    return support, campaigns, interventions
+
+
 def load_base_tables(engine):
     purchase_events = pd.read_sql(
         "SELECT customer_unique_id, order_purchase_timestamp, representative_order_id "
@@ -135,7 +163,8 @@ def hhi(shares: pd.Series) -> float:
     return float(((shares / total) ** 2).sum())
 
 
-def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, customers):
+def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, customers,
+                    support, campaigns, interventions):
     past = order_summary[order_summary["order_purchase_timestamp"] <= snapshot_date].copy()
     future_events = purchase_events[purchase_events["order_purchase_timestamp"] > snapshot_date]
     past_items = item_summary[item_summary["order_purchase_timestamp"] <= snapshot_date]
@@ -154,6 +183,13 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
         future_events.sort_values("order_purchase_timestamp")
         .groupby("customer_unique_id")["order_purchase_timestamp"].first()
     )
+
+    past_support = support[support["created_at"] <= snapshot_date]
+    past_campaigns = campaigns[campaigns["campaign_date"] <= snapshot_date]
+    past_interventions = interventions[interventions["created_at"] <= snapshot_date]
+    grouped_support = past_support.groupby("customer_unique_id")
+    grouped_campaigns = past_campaigns.groupby("customer_unique_id")
+    intervention_counts = past_interventions.groupby("customer_unique_id").size()
 
     grouped = past.groupby("customer_unique_id")
     grouped_items = past_items.groupby("customer_unique_id")
@@ -191,6 +227,10 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
             gap = (nxt - snapshot_date).days
             days_to_next_purchase = gap
             churned = 1 if gap > CHURN_WINDOW_DAYS else 0
+
+        cust_support = grouped_support.get_group(customer_id) if customer_id in grouped_support.groups else pd.DataFrame(columns=support.columns)
+        cust_campaigns = grouped_campaigns.get_group(customer_id) if customer_id in grouped_campaigns.groups else pd.DataFrame(columns=campaigns.columns)
+        recent_support = cust_support[cust_support["created_at"] > win90] if len(cust_support) else cust_support
 
         row = {
             "customer_unique_id": customer_id,
@@ -235,6 +275,21 @@ def build_snapshot(snapshot_date, purchase_events, order_summary, item_summary, 
             "lifetime_purchase_frequency": lifetime_orders_true / tenure_days,
             "recent_delivery_delay": recent_delivered["delivery_delay_days"].mean() if len(recent_delivered) else np.nan,
             "historical_delivery_delay": delivered["delivery_delay_days"].mean(),
+            # SUPPORT (synthetic, timestamped -- see docs/synthetic_data_generation.md)
+            "n_support_tickets": len(cust_support),
+            "n_tickets_last_90_days": len(recent_support),
+            "pct_tickets_resolved": cust_support["resolved"].mean() if len(cust_support) else np.nan,
+            "pct_tickets_escalated": cust_support["escalated"].mean() if len(cust_support) else np.nan,
+            "avg_resolution_hours": cust_support["resolution_hours"].mean() if len(cust_support) else np.nan,
+            "avg_ticket_satisfaction": cust_support["customer_satisfaction"].mean() if len(cust_support) else np.nan,
+            # MARKETING (synthetic, timestamped)
+            "n_campaigns_received": len(cust_campaigns),
+            "pct_campaigns_opened": cust_campaigns["opened"].mean() if len(cust_campaigns) else np.nan,
+            "pct_campaigns_clicked": cust_campaigns["clicked"].mean() if len(cust_campaigns) else np.nan,
+            "pct_campaigns_converted": cust_campaigns["converted"].mean() if len(cust_campaigns) else np.nan,
+            "days_since_last_campaign": (snapshot_date - cust_campaigns["campaign_date"].max()).days if len(cust_campaigns) else np.nan,
+            # RETENTION INTERVENTIONS (synthetic, timestamped)
+            "has_been_targeted_for_retention": int(intervention_counts.get(customer_id, 0) > 0),
             # LABEL
             "days_to_next_purchase": days_to_next_purchase,
             "churned": churned,
@@ -267,13 +322,17 @@ def main():
     engine = create_engine(DATABASE_URL)
     print("Loading base tables...")
     purchase_events, order_summary, item_summary, customers = load_base_tables(engine)
+    print("Loading synthetic tables (support, campaigns, interventions)...")
+    support, campaigns, interventions = load_synthetic_tables(engine)
+    print(f"  {len(support)} tickets, {len(campaigns)} campaign touches, {len(interventions)} interventions")
     print(f"  {len(order_summary)} orders, {len(item_summary)} order-items, "
           f"{purchase_events['customer_unique_id'].nunique()} customers")
 
     all_snapshots = []
     for snap in SNAPSHOT_DATES:
         print(f"Building snapshot {snap.date()}...")
-        feats = build_snapshot(snap, purchase_events, order_summary, item_summary, customers)
+        feats = build_snapshot(snap, purchase_events, order_summary, item_summary, customers,
+                                support, campaigns, interventions)
         if snap in TRAIN_SNAPSHOTS:
             feats["split"] = "train"
         elif snap in VALIDATION_SNAPSHOTS:

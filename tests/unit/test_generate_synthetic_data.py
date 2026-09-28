@@ -98,6 +98,45 @@ print(f"retention_interventions: {len(interventions)} rows, timing constraints h
 
 print("\nALL SYNTHETIC DATA GENERATION SMOKE TESTS PASSED")
 
+# --- test 8: the span_days leakage fix, proven concretely ---
+# Two customers, IDENTICAL in every way that should matter (first_purchase,
+# revenue_percentile, late_deliveries, review_score) except last_purchase --
+# one a true one-timer (last_purchase = first_purchase+10), one a long-span
+# repeat buyer (last_purchase = first_purchase+400). Before the fix, the
+# event-dating window was computed FROM last_purchase, so these two
+# customers would get systematically different campaign/ticket densities
+# before any early cutoff -- silently leaking their future return behavior.
+# After the fix, generation must not depend on last_purchase at all, so with
+# the same RNG state the two customers' outputs must be identical.
+import generate_synthetic_data as gen_mod
+
+twin_behavior = pd.DataFrame({
+    "customer_unique_id": ["twin_A", "twin_B"],
+    "first_purchase": [pd.Timestamp("2017-05-01")] * 2,
+    "last_purchase": [pd.Timestamp("2017-05-11"), pd.Timestamp("2018-06-05")],  # only difference
+    "n_orders": [1, 2],
+    "avg_delivery_days": [10.0, 10.0],
+    "n_late_deliveries": [0, 0],
+    "avg_review_score": [4.0, 4.0],
+    "total_revenue": [100.0, 100.0],
+    "n_voucher_payments": [0, 0],
+    "revenue_percentile": [0.5, 0.5],
+})
+
+gen_mod.RNG = np.random.default_rng(123)
+campaigns_A = generate_marketing_campaigns(twin_behavior.iloc[[0]])
+gen_mod.RNG = np.random.default_rng(123)  # reset to the same state
+campaigns_B = generate_marketing_campaigns(twin_behavior.iloc[[1]])
+
+dates_A = sorted(campaigns_A["campaign_date"].tolist())
+dates_B = sorted(campaigns_B["campaign_date"].tolist())
+assert dates_A == dates_B, (
+    "BUG: identical customers except last_purchase produced different campaign "
+    f"dates -- last_purchase is still leaking into event timing.\nA={dates_A}\nB={dates_B}"
+)
+print(f"span_days leakage fix proven: twins with different last_purchase produced "
+      f"IDENTICAL campaign dates ({len(dates_A)} campaigns each): PASSED")
+
 # --- test 7: the join fan-out fix in load_real_behavior(), proven concretely ---
 # One order: 3 items (total price 100) and 2 payment installments.
 # A naive (unfixed) query joining order_items and payments directly to

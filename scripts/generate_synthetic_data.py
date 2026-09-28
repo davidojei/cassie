@@ -35,6 +35,15 @@ load_dotenv()
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://cassie:cassie@localhost:5432/cassie")
 SYNTHETIC_DIR = Path(__file__).parent.parent / "data" / "synthetic"
 RNG = np.random.default_rng(42)  # fixed seed -- reproducible, documented
+MAX_VALID_DATE = pd.Timestamp("2018-08-31")  # matches docs/business_exploration_findings.md finding 9
+# Fixed, customer-independent window for dating synthetic support/marketing
+# events. MUST NOT be derived from any individual customer's true
+# last_purchase -- see docs/synthetic_data_generation.md "join fan-out and
+# span_days leakage" for why that was a real bug found in this file: a
+# window sized from a customer's TRUE full purchase span silently leaks
+# their future return behavior into how densely-packed their synthetic
+# events appear before any early snapshot.
+EVENT_HORIZON_DAYS = 730
 
 
 def load_real_behavior(engine) -> pd.DataFrame:
@@ -105,8 +114,11 @@ def generate_customer_support(behavior: pd.DataFrame) -> pd.DataFrame:
         n_tickets = min(RNG.poisson(ticket_prob * 1.5), 4)  # capped so no customer gets an implausible ticket count
 
         for _ in range(n_tickets):
-            span_days = max((c["last_purchase"] - c["first_purchase"]).days, 1)
-            created_at = c["first_purchase"] + timedelta(days=int(RNG.uniform(0, span_days + 30)))
+            # Fixed horizon, capped at the dataset's real end -- NOT derived
+            # from this customer's true last_purchase (see EVENT_HORIZON_DAYS).
+            window_end = min(c["first_purchase"] + timedelta(days=EVENT_HORIZON_DAYS), MAX_VALID_DATE)
+            window_days = max((window_end - c["first_purchase"]).days, 1)
+            created_at = c["first_purchase"] + timedelta(days=int(RNG.uniform(0, window_days)))
 
             issue_weights = [0.45, 0.2, 0.15, 0.15, 0.05] if c["n_late_deliveries"] > 0 else [0.15, 0.3, 0.2, 0.25, 0.1]
             issue_type = RNG.choice(ISSUE_TYPES, p=issue_weights)
@@ -145,8 +157,11 @@ def generate_marketing_campaigns(behavior: pd.DataFrame) -> pd.DataFrame:
     for _, c in behavior.iterrows():
         n_campaigns = int(RNG.poisson(2 + c["revenue_percentile"] * 4))
         for _ in range(n_campaigns):
-            span_days = max((c["last_purchase"] - c["first_purchase"]).days, 1) + 60
-            campaign_date = c["first_purchase"] + timedelta(days=int(RNG.uniform(0, span_days)))
+            # Same fix as customer_support above -- fixed horizon, not
+            # derived from this customer's true last_purchase.
+            window_end = min(c["first_purchase"] + timedelta(days=EVENT_HORIZON_DAYS), MAX_VALID_DATE)
+            window_days = max((window_end - c["first_purchase"]).days, 1)
+            campaign_date = c["first_purchase"] + timedelta(days=int(RNG.uniform(0, window_days)))
             channel = RNG.choice(CHANNELS, p=[0.6, 0.25, 0.15])
             campaign_type = RNG.choice(TYPES)
             offer_pct = float(RNG.choice([0, 5, 10, 15, 20], p=[0.4, 0.2, 0.2, 0.15, 0.05]))
@@ -275,7 +290,7 @@ def main():
     print(f"  {len(segments)} customers")
 
     print("Generating retention_interventions...")
-    interventions = generate_retention_interventions(behavior, pd.Timestamp("2018-08-31"))
+    interventions = generate_retention_interventions(behavior, MAX_VALID_DATE)
     print(f"  {len(interventions)} interventions")
 
     tables = {
