@@ -16,6 +16,36 @@ coefficients, which would directly undermine Phase 14's SHAP work:
 | `recent_90d_revenue` | `revenue_last_90_days` | identical formula |
 | `purchase_frequency` | `lifetime_purchase_frequency` | identical formula |
 | `average_delivery_delay` | `historical_delivery_delay` | identical formula |
+
+## Second audit, found via SHAP output (Phase 10) — subgroup collinearity, not exact duplication
+
+The audit above catches columns that are identical *in general*. It
+missed a subtler case: `average_order_value`, `max_order_value`, and
+`lifetime_revenue` are NOT duplicates in general, but they become
+**mathematically identical for any customer with exactly one lifetime
+order** — which is ~97% of this dataset. For the dominant subgroup,
+logistic regression was fitting three perfectly collinear inputs,
+which it resolves by splitting the coefficient arbitrarily between
+them, sometimes with opposite signs that partially cancel. This
+surfaced as a real, visible problem in a SHAP customer explanation: the
+same dollar figure appeared three times for a one-order customer,
+increasing risk under one feature name and decreasing it under
+another — the kind of contradiction that would break stakeholder trust
+immediately if shown as-is.
+
+**Fix**: `average_order_value` and `max_order_value` removed from the
+model's feature set. `lifetime_revenue` kept as the single "how much
+have they spent" signal. `recent_90d_revenue`/`previous_90d_revenue`
+kept — these aren't purely redundant even for single-order customers,
+since they additionally encode *when* the purchase happened, not just
+its size.
+
+This is a different category of problem than the first audit: not a
+data-generation duplicate, but collinearity that only exists within a
+specific, dominant subgroup of the real data — the kind of thing that
+doesn't show up by inspecting the feature table's columns, only by
+actually reading what a fitted model produces for real customers.
+Retrain required after this change (feature set changed).
 | `recent_90d_revenue`, `previous_90d_revenue` | `spend_trend_90d` | trend = recent − previous, exactly; keeping all three is perfectly collinear |
 
 Also excluded, not because they're duplicates but because they're not

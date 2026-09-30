@@ -40,7 +40,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://cassie:cassie@localh
 NUMERIC_FEATURES = [
     "days_since_last_purchase", "orders_last_30_days", "orders_last_90_days",
     "orders_last_180_days", "lifetime_orders", "lifetime_revenue",
-    "average_order_value", "max_order_value", "purchase_frequency",
+    "purchase_frequency",
     "purchase_gap_mean", "purchase_gap_std",
     "average_delivery_delay", "late_delivery_rate", "average_delivery_days",
     "average_review_score", "negative_review_rate",
