@@ -147,10 +147,22 @@ def load_base_tables(engine):
         on="order_id", how="left",
     )
 
-    customers = pd.read_sql(
-        "SELECT DISTINCT customer_unique_id, customer_state, customer_city FROM staging.customers_clean",
-        engine,
+    customers_raw = pd.read_sql(
+    "SELECT customer_unique_id, customer_state, customer_city FROM staging.customers_clean",
+    engine,
+)
+    # Some customers have more than one (state, city) pair on file (different
+    # address across orders) — plain DISTINCT doesn't collapse these to one row
+    # per customer, fanning out every downstream snapshot merge. Same bug
+    # category as the cart-split and item-join-fan-out fixes above (see docs).
+    # Deterministic fix: each customer's most frequent (state, city) pair,
+    # ties broken alphabetically for reproducibility.
+    customers = (
+        customers_raw.groupby("customer_unique_id")
+        .agg(lambda s: s.value_counts().sort_index().idxmax())
+        .reset_index()
     )
+    assert customers["customer_unique_id"].is_unique, "customers still has duplicate keys after dedup"
 
     return purchase_events, order_summary, item_summary, customers
 
