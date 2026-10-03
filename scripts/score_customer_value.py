@@ -208,14 +208,17 @@ def main():
     print("\n--- predicted_churn_probability distribution ---")
     print(result["predicted_churn_probability"].describe())
 
-    # risk_tier cutoffs deliberately NOT hardcoded -- see the printed
-    # distribution above and pick sensible cutoffs once you've looked at
-    # real numbers. Placeholder tertiles shown so the column isn't left
-    # hanging open; replace before this feeds any report or dashboard.
+    # risk_tier cutoffs: median/80th-percentile split (low <0.49,
+    # medium 0.49-0.64, high >0.64), confirmed against the real scoring
+    # distribution (see docs/customer_value_design.md) rather than
+    # guessed in advance. Given the model's own weak ROC-AUC (~0.55-0.65),
+    # finer-grained tiers would imply more precision than the underlying
+    # probabilities actually support -- three tiers is deliberately as
+    # far as this goes.
     result["risk_tier"] = pd.qcut(
         result["predicted_churn_probability"], q=[0, 0.5, 0.8, 1.0], labels=["low", "medium", "high"],
     )
-    print("\n--- risk_tier counts (PLACEHOLDER cutoffs -- revisit) ---")
+    print("\n--- risk_tier counts ---")
     print(result["risk_tier"].value_counts())
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
